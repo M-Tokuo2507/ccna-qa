@@ -1,5 +1,5 @@
 // アプリのファイルを変更したら CACHE_NAME の番号を上げる
-const CACHE_NAME = 'ccna-qa-v5';
+const CACHE_NAME = 'ccna-qa-v6';
 const ASSETS = [
   './',
   './index.html',
