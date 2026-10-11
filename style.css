@@ -86,6 +86,11 @@ button, select, input, textarea { font-family: inherit; }
 .stat-value { display: block; font-size: 1.35rem; font-weight: 700; color: var(--accent); }
 .stat-label { font-size: 0.72rem; color: var(--text-secondary); }
 
+.scope-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.scope-label { font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.scope-row .segmented { flex: 1; }
+.scope-row .segmented button { min-height: 40px; font-size: 0.85rem; }
+
 .section-label {
   font-size: 0.78rem;
   font-weight: 600;

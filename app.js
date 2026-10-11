@@ -4,7 +4,7 @@
    =================================================================== */
 'use strict';
 
-const APP_VERSION = 'v2';
+const APP_VERSION = 'v3';
 
 /* ---------- 章・節マスタ ---------- */
 const SECTIONS = [];            // 教材順
@@ -51,9 +51,15 @@ const sharedQuestions = [...new Map(
 const SHARED_IDS = new Set(sharedQuestions.map(q => q.id));
 
 let localQuestions = loadJSON(KEY_QUESTIONS, []);
-let questions = [];   // 共通＋自作（表示・出題用）
+let allQuestions = [];   // 共通＋自作（一覧・編集用）
+let questions = [];      // 出題範囲の設定を反映したもの（出題・集計用）
 function rebuildQuestions() {
-  questions = [...sharedQuestions, ...localQuestions.filter(q => !SHARED_IDS.has(q.id))];
+  allQuestions = [...sharedQuestions, ...localQuestions.filter(q => !SHARED_IDS.has(q.id))];
+  questions = studyScope() === 'own' ? allQuestions.filter(q => !q.shared) : allQuestions;
+}
+/** 出題範囲：'all'＝共通＋自作 / 'own'＝自作のみ */
+function studyScope() {
+  return loadJSON(KEY_SETTINGS, {}).scope === 'own' ? 'own' : 'all';
 }
 rebuildQuestions();
 
@@ -165,6 +171,26 @@ function updateHome() {
     .forEach(b => b.classList.toggle('is-empty', empty));
   document.querySelector('.mode-btn[data-mode="weak"]').classList.toggle('is-empty', weak === 0);
   document.querySelector('.mode-btn[data-mode="unlearned"]').classList.toggle('is-empty', unlearned === 0);
+
+  // 共通問題があるときだけ出題範囲の切り替えを表示
+  $('scope-row').style.display = sharedQuestions.length ? 'flex' : 'none';
+  const scope = studyScope();
+  document.querySelectorAll('#scope-switch button').forEach(b => b.classList.toggle('active', b.dataset.scope === scope));
+}
+
+function setScope(scope) {
+  const s = loadSettings();
+  s.scope = scope;
+  saveSettings(s);
+  rebuildQuestions();
+  updateHome();
+}
+
+/** 出題する問題がないときのメッセージ */
+function noQuestionMessage() {
+  if (allQuestions.length === 0) return 'まず問題を登録してください';
+  if (questions.length === 0) return '自作問題がありません（出題範囲：自作のみ）';
+  return 'この範囲には問題がありません';
 }
 
 /* ---------- 章・節の選択 ---------- */
@@ -237,7 +263,7 @@ let answered = false;
 
 function startQuiz(list, label, shuffled = true) {
   if (!list.length) {
-    toast(questions.length === 0 ? 'まず問題を登録してください' : 'この範囲には問題がありません');
+    toast(noQuestionMessage());
     return;
   }
   quizSource = list.map(q => q.id);
@@ -367,7 +393,7 @@ function showResult() {
   $('result-total').textContent = total;
   $('result-rate').textContent = total ? `${quizLabel}　正答率 ${Math.round((correct / total) * 100)}%` : quizLabel;
 
-  const byId = Object.fromEntries(questions.map(q => [q.id, q]));
+  const byId = Object.fromEntries(allQuestions.map(q => [q.id, q]));
   $('result-breakdown').innerHTML = quizResults.map(r => {
     const q = byId[r.id];
     if (!q) return '';
@@ -455,7 +481,7 @@ function openEdit(id, returnTo, presetSection) {
   editingId = id;
   editReturn = returnTo;
   const settings = loadSettings();
-  const q = id ? questions.find(x => x.id === id) : null;
+  const q = id ? allQuestions.find(x => x.id === id) : null;
   const readonly = !!(q && q.shared);
 
   $('edit-title').textContent = readonly ? '共通問題' : q ? '問題を編集' : '問題を登録';
@@ -529,7 +555,7 @@ function saveEdit(e) {
     localQuestions.push(item);
     if (!saveQuestions()) { localQuestions.pop(); return; }
     rebuildQuestions();
-    const n = questions.filter(x => x.section === q.section).length;
+    const n = allQuestions.filter(x => x.section === q.section).length;
     toast(`登録しました（${q.section}：${n}問目）`);
     // 節と形式はそのままで続けて入力
     $('f-question').value = '';
@@ -575,7 +601,7 @@ function buildQuestionList() {
   const word = $('list-search').value.trim().toLowerCase();
   const records = loadRecords();
 
-  let list = sortByTextbook(questions);
+  let list = sortByTextbook(allQuestions);
   if (filter.startsWith('ch:')) {
     const no = Number(filter.slice(3));
     list = list.filter(q => SECTION_MAP[q.section] && SECTION_MAP[q.section].chapterNo === no);
@@ -595,7 +621,7 @@ function buildQuestionList() {
 
   $('list-count').textContent = `${list.length}問`;
   const wrap = $('question-list');
-  if (questions.length === 0) {
+  if (allQuestions.length === 0) {
     wrap.innerHTML = '<p class="empty-msg">まだ問題がありません。<br>右上の「＋登録」から追加してください。</p>';
     return;
   }
@@ -759,7 +785,7 @@ function importData(file) {
       localQuestions = [...map.values()];
       saveQuestions();
       rebuildQuestions();
-      const known = new Set(questions.map(q => q.id));
+      const known = new Set(allQuestions.map(q => q.id));
       if (importRecords) {
         const records = loadRecords();
         Object.entries(importRecords).forEach(([id, r]) => {
@@ -806,7 +832,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const mode = btn.dataset.mode;
       if (mode === 'add') return openEdit(null, 'home');
       if (mode === 'list') return showScreen('list');
-      if (questions.length === 0) return toast('まず問題を登録してください');
+      if (questions.length === 0) return toast(noQuestionMessage());
       if (mode === 'category') return showScreen('chapters');
       if (mode === 'weak') {
         const weak = getWeakQuestions();
@@ -830,6 +856,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => showScreen(btn.dataset.target));
   });
   $('btn-settings').onclick = () => showScreen('settings');
+  document.querySelectorAll('#scope-switch button').forEach(b => { b.onclick = () => setScope(b.dataset.scope); });
 
   // クイズ
   $('btn-quit').onclick = quitQuiz;
@@ -840,12 +867,12 @@ document.addEventListener('DOMContentLoaded', () => {
     openEdit(q.id, 'quiz');
   };
   $('btn-retry').onclick = () => {
-    const byId = Object.fromEntries(questions.map(q => [q.id, q]));
+    const byId = Object.fromEntries(allQuestions.map(q => [q.id, q]));
     const list = quizSource.map(id => byId[id]).filter(Boolean);
     startQuiz(quizShuffled ? shuffle(list) : list, quizLabel, quizShuffled);
   };
   $('btn-retry-wrong').onclick = () => {
-    const byId = Object.fromEntries(questions.map(q => [q.id, q]));
+    const byId = Object.fromEntries(allQuestions.map(q => [q.id, q]));
     const list = quizResults.filter(r => !r.correct).map(r => byId[r.id]).filter(Boolean);
     startQuiz(shuffle(list), quizLabel + '（間違えた問題）');
   };
