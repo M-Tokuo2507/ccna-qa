@@ -11,7 +11,7 @@
   <title>CCNA 一問一答</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=1">
+  <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -23,7 +23,7 @@
     </header>
 
     <div class="stats-card">
-      <div class="stat"><span class="stat-value" id="stat-count">0</span><span class="stat-label">登録数</span></div>
+      <div class="stat"><span class="stat-value" id="stat-count">0</span><span class="stat-label">問題数</span></div>
       <div class="stat"><span class="stat-value" id="stat-done">0</span><span class="stat-label">学習済み</span></div>
       <div class="stat"><span class="stat-value" id="stat-rate">--%</span><span class="stat-label">正答率</span></div>
       <div class="stat"><span class="stat-value" id="stat-weak">0</span><span class="stat-label">苦手</span></div>
@@ -172,6 +172,8 @@
       <h2 id="edit-title">問題を登録</h2>
     </header>
     <form id="edit-form" class="form" autocomplete="off">
+      <p class="hint shared-note" id="shared-hint" style="display:none">共通問題（GitHubから配信）はアプリでは編集・削除できません。修正はPC側の questions-shared.js で行います。</p>
+      <fieldset id="edit-fields" class="form">
       <label class="field">
         <span class="field-label">節</span>
         <select id="f-section" required></select>
@@ -214,6 +216,7 @@
         <span class="field-label">解説 <small>（任意）</small></span>
         <textarea id="f-explanation" rows="2"></textarea>
       </label>
+      </fieldset>
 
       <button type="submit" class="primary-btn" id="btn-save">登録する</button>
       <button type="button" class="danger-btn full" id="btn-delete" style="display:none">この問題を削除</button>
@@ -289,6 +292,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="chapters.js"></script>
+  <script src="questions-shared.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

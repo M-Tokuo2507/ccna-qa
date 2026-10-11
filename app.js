@@ -4,7 +4,7 @@
    =================================================================== */
 'use strict';
 
-const APP_VERSION = 'v1';
+const APP_VERSION = 'v2';
 
 /* ---------- 章・節マスタ ---------- */
 const SECTIONS = [];            // 教材順
@@ -37,12 +37,31 @@ function saveJSON(key, value) {
   }
 }
 
-let questions = loadJSON(KEY_QUESTIONS, []);
+/* 問題は2種類
+   - 共通問題：questions-shared.js（Gitで配信、全端末共通、アプリでは読み取り専用）
+   - 自作問題：localStorage（この端末で登録・編集）
+   同じIDが両方にある場合は共通問題を優先し、自作側は表示しない（共通に取り込み済みとみなす） */
+const sharedQuestions = [...new Map(
+  (typeof SHARED_QUESTIONS !== 'undefined' ? SHARED_QUESTIONS : [])
+    .filter(r => r && r.id)
+    .map(normalizeQuestion)
+    .filter(Boolean)
+    .map(q => [q.id, { ...q, shared: true }])
+).values()];
+const SHARED_IDS = new Set(sharedQuestions.map(q => q.id));
+
+let localQuestions = loadJSON(KEY_QUESTIONS, []);
+let questions = [];   // 共通＋自作（表示・出題用）
+function rebuildQuestions() {
+  questions = [...sharedQuestions, ...localQuestions.filter(q => !SHARED_IDS.has(q.id))];
+}
+rebuildQuestions();
+
 const loadRecords = () => loadJSON(KEY_RECORDS, {});
 const saveRecords = r => saveJSON(KEY_RECORDS, r);
 const loadSettings = () => loadJSON(KEY_SETTINGS, {});
 const saveSettings = s => saveJSON(KEY_SETTINGS, s);
-const saveQuestions = () => saveJSON(KEY_QUESTIONS, questions);
+const saveQuestions = () => saveJSON(KEY_QUESTIONS, localQuestions);
 
 function recordAnswer(id, isCorrect) {
   const records = loadRecords();
@@ -437,11 +456,15 @@ function openEdit(id, returnTo, presetSection) {
   editReturn = returnTo;
   const settings = loadSettings();
   const q = id ? questions.find(x => x.id === id) : null;
+  const readonly = !!(q && q.shared);
 
-  $('edit-title').textContent = q ? '問題を編集' : '問題を登録';
+  $('edit-title').textContent = readonly ? '共通問題' : q ? '問題を編集' : '問題を登録';
   $('btn-save').textContent = q ? '保存する' : '登録する';
-  $('btn-delete').style.display = q ? 'block' : 'none';
+  $('btn-save').style.display = readonly ? 'none' : 'block';
+  $('btn-delete').style.display = q && !readonly ? 'block' : 'none';
   $('edit-hint').style.display = q ? 'none' : 'block';
+  $('shared-hint').style.display = readonly ? 'block' : 'none';
+  $('edit-fields').disabled = readonly;
 
   $('f-section').value = q ? q.section : (presetSection || settings.lastSection || SECTIONS[0].code);
   $('f-question').value = q ? q.question : '';
@@ -489,19 +512,23 @@ function saveEdit(e) {
   saveSettings(settings);
 
   if (editingId) {
-    const idx = questions.findIndex(x => x.id === editingId);
-    questions[idx] = { ...questions[idx], ...q, updatedAt: Date.now() };
+    const idx = localQuestions.findIndex(x => x.id === editingId);
+    if (idx < 0) return;
+    const updated = { ...localQuestions[idx], ...q, updatedAt: Date.now() };
+    if (updated.type !== 'choice') delete updated.choices;
+    localQuestions[idx] = updated;
     if (!saveQuestions()) return;
+    rebuildQuestions();
     toast('保存しました');
     // 出題中の問題も差し替える
     const qi = currentQuiz.findIndex(x => x.id === editingId);
-    if (qi >= 0) currentQuiz[qi] = questions[idx];
+    if (qi >= 0) currentQuiz[qi] = updated;
     backFromEdit();
   } else {
     const item = { id: newId(), ...q, createdAt: Date.now() };
-    if (!q.choices) delete item.choices;
-    questions.push(item);
-    if (!saveQuestions()) { questions.pop(); return; }
+    localQuestions.push(item);
+    if (!saveQuestions()) { localQuestions.pop(); return; }
+    rebuildQuestions();
     const n = questions.filter(x => x.section === q.section).length;
     toast(`登録しました（${q.section}：${n}問目）`);
     // 節と形式はそのままで続けて入力
@@ -516,8 +543,9 @@ function saveEdit(e) {
 function deleteEditing() {
   const id = editingId;
   showDialog('この問題を削除しますか？\n（学習記録も削除されます）', () => {
-    questions = questions.filter(q => q.id !== id);
+    localQuestions = localQuestions.filter(q => q.id !== id);
     saveQuestions();
+    rebuildQuestions();
     const records = loadRecords();
     delete records[id];
     saveRecords(records);
@@ -553,6 +581,10 @@ function buildQuestionList() {
     list = list.filter(q => SECTION_MAP[q.section] && SECTION_MAP[q.section].chapterNo === no);
   } else if (filter === 'weak') {
     list = list.filter(q => isWeak(records[q.id]));
+  } else if (filter === 'local') {
+    list = list.filter(q => !q.shared);
+  } else if (filter === 'shared') {
+    list = list.filter(q => q.shared);
   } else if (filter) {
     list = list.filter(q => q.section === filter);
   }
@@ -576,7 +608,7 @@ function buildQuestionList() {
     const ans = q.type === 'desc' ? q.answer : q.type === 'ox' ? (q.answer ? '〇' : '×') : q.choices[q.answer];
     const stat = r ? `<span class="${isWeak(r) ? 'rate-bad' : ''}">○${r.correct} ×${r.wrong}</span>` : '<span>未学習</span>';
     return `<button class="q-item" data-id="${esc(q.id)}">
-      <div class="q-meta"><span>${esc(q.section)}</span><span>${TYPE_LABEL[q.type]}</span>${stat}</div>
+      <div class="q-meta"><span>${esc(q.section)}</span><span>${TYPE_LABEL[q.type]}</span><span class="src-${q.shared ? 'shared' : 'local'}">${q.shared ? '共通' : '自作'}</span>${stat}</div>
       <div class="q-text">${esc(q.question)}</div>
       <div class="q-answer">→ ${esc(ans)}</div>
     </button>`;
@@ -588,6 +620,8 @@ function buildListFilter() {
   sel.innerHTML = '';
   sel.add(new Option('すべて', ''));
   sel.add(new Option('苦手問題のみ', 'weak'));
+  sel.add(new Option('自作問題のみ', 'local'));
+  sel.add(new Option('共通問題のみ', 'shared'));
   CHAPTERS.forEach(ch => {
     const g = document.createElement('optgroup');
     g.label = `第${ch.no}章 ${ch.name}`;
@@ -612,16 +646,24 @@ function buildSettings() {
   $('last-backup').textContent = s.lastBackup
     ? `前回の書き出し：${new Date(s.lastBackup).toLocaleString('ja-JP')}`
     : 'まだ書き出していません。';
-  $('app-version').textContent = `CCNA 一問一答 ${APP_VERSION}　/　登録 ${questions.length}問`;
+  const own = getOwnQuestions().length;
+  $('app-version').textContent = `CCNA 一問一答 ${APP_VERSION}　/　共通 ${sharedQuestions.length}問・自作 ${own}問`;
+}
+
+/** この端末で登録した問題（共通に取り込み済みのものは除く） */
+function getOwnQuestions() {
+  return localQuestions.filter(q => !SHARED_IDS.has(q.id));
 }
 
 async function exportData() {
-  if (questions.length === 0) { toast('書き出す問題がありません'); return; }
+  const own = getOwnQuestions();
+  if (own.length === 0 && Object.keys(loadRecords()).length === 0) { toast('書き出すデータがありません'); return; }
+  // 共通問題はGitにあるので書き出さない（学習記録は共通問題の分も含める）
   const data = {
     app: 'ccna-qa',
     version: 1,
     exportedAt: new Date().toISOString(),
-    questions,
+    questions: own,
     records: loadRecords()
   };
   const d = new Date();
@@ -693,27 +735,35 @@ function importData(file) {
     const rawList = Array.isArray(data) ? data : (data && Array.isArray(data.questions) ? data.questions : null);
     if (!rawList) { showDialog('問題データが見つかりませんでした。'); return; }
 
-    const valid = rawList.map(normalizeQuestion).filter(Boolean);
-    const skipped = rawList.length - valid.length;
-    const existing = new Set(questions.map(q => q.id));
+    const normalized = rawList.map(normalizeQuestion).filter(Boolean);
+    const skipped = rawList.length - normalized.length;
+    const valid = normalized.filter(q => !SHARED_IDS.has(q.id));
+    const alreadyShared = normalized.length - valid.length;
+    const existing = new Set(localQuestions.map(q => q.id));
     const updates = valid.filter(q => existing.has(q.id)).length;
     const adds = valid.length - updates;
     const importRecords = data && !Array.isArray(data) && data.records && typeof data.records === 'object' ? data.records : null;
 
-    if (valid.length === 0) { showDialog(`読み込める問題がありませんでした（${skipped}件は形式不正）。`); return; }
+    if (valid.length === 0 && !importRecords) {
+      showDialog(`読み込める問題がありませんでした。${alreadyShared ? `\n（${alreadyShared}問は共通問題に取り込み済み）` : ''}${skipped ? `\n（${skipped}件は形式不正）` : ''}`);
+      return;
+    }
 
     let msg = `${valid.length}問を読み込みます。\n・新規 ${adds}問\n・上書き ${updates}問（同じIDの問題）`;
+    if (alreadyShared) msg += `\n・対象外 ${alreadyShared}問（共通問題に取り込み済み）`;
     if (skipped) msg += `\n・スキップ ${skipped}件（節コード不明・必須項目なし）`;
     if (importRecords) msg += '\n学習記録も読み込みます。';
     showDialog(msg, () => {
-      const map = new Map(questions.map(q => [q.id, q]));
+      const map = new Map(localQuestions.map(q => [q.id, q]));
       valid.forEach(q => map.set(q.id, q));
-      questions = [...map.values()];
+      localQuestions = [...map.values()];
       saveQuestions();
+      rebuildQuestions();
+      const known = new Set(questions.map(q => q.id));
       if (importRecords) {
         const records = loadRecords();
         Object.entries(importRecords).forEach(([id, r]) => {
-          if (map.has(id) && r && Number.isFinite(r.correct) && Number.isFinite(r.wrong)) {
+          if (known.has(id) && r && Number.isFinite(r.correct) && Number.isFinite(r.wrong)) {
             records[id] = { correct: r.correct, wrong: r.wrong };
           }
         });
@@ -784,7 +834,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // クイズ
   $('btn-quit').onclick = quitQuiz;
   $('btn-next').onclick = goNext;
-  $('btn-quiz-edit').onclick = () => openEdit(currentQuiz[currentIndex].id, 'quiz');
+  $('btn-quiz-edit').onclick = () => {
+    const q = currentQuiz[currentIndex];
+    if (q.shared) { toast('共通問題はPC側で修正します'); return; }
+    openEdit(q.id, 'quiz');
+  };
   $('btn-retry').onclick = () => {
     const byId = Object.fromEntries(questions.map(q => [q.id, q]));
     const list = quizSource.map(id => byId[id]).filter(Boolean);
@@ -830,13 +884,20 @@ document.addEventListener('DOMContentLoaded', () => {
     saveRecords({});
     toast('学習記録をリセットしました');
   }, 'リセット');
-  $('btn-delete-all').onclick = () => showDialog(`登録済みの${questions.length}問と学習記録をすべて削除しますか？\n元に戻せません。先に書き出しておくことをおすすめします。`, () => {
-    questions = [];
-    saveQuestions();
-    saveRecords({});
-    buildSettings();
-    toast('すべて削除しました');
-  }, '削除');
+  $('btn-delete-all').onclick = () => {
+    const own = getOwnQuestions();
+    if (!own.length) { toast('自作問題はありません'); return; }
+    showDialog(`この端末で登録した${own.length}問と、その学習記録を削除しますか？\n（共通問題は消えません）\n元に戻せません。先に書き出しておくことをおすすめします。`, () => {
+      const records = loadRecords();
+      localQuestions.forEach(q => { if (!SHARED_IDS.has(q.id)) delete records[q.id]; });
+      saveRecords(records);
+      localQuestions = [];
+      saveQuestions();
+      rebuildQuestions();
+      buildSettings();
+      toast('自作問題を削除しました');
+    }, '削除');
+  };
 
   updateHome();
 
